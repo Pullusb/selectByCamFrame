@@ -15,7 +15,123 @@ import bpy
 from mathutils import Vector
 from time import time
 from bpy_extras.object_utils import world_to_camera_view
+import numpy
+import math
 
+IMAX = 90000000
+
+def normalize(v):
+    norm=numpy.linalg.norm(v, ord=1)
+    if norm==0:
+        norm=numpy.finfo(v.dtype).eps
+    return v/norm
+
+def get_bb_min_max_on_axe(axis, bb):
+    bb_min = IMAX
+    bb_max = -IMAX
+
+    for vertice in bb:
+        projection = numpy.dot(vertice,axis)
+        bb_min = min(bb_min,projection)
+        bb_max = max(bb_max,projection)
+
+    return [bb_min,bb_max]
+
+
+def sat_intersect(mm_cam, frustum_planes, obj):
+    obj_bb = [obj.matrix_world @ Vector(i) for i in obj.bound_box]
+    for i,plane in enumerate(frustum_planes):
+        mm_obj = get_bb_min_max_on_axe(plane[:3],obj_bb)
+
+        if not overlap(mm_obj[0],mm_obj[1],mm_cam[i][0],mm_cam[i][1]):
+            return False
+    
+    return True 
+
+
+def overlap(min1, max1, min2, max2):
+    return is_between(min2, min1, max1) or is_between(min1, min2, max2)
+
+
+def is_between(val, lower_bound, upper_bound):
+    return lower_bound <= val and val <= upper_bound
+
+
+def construct_plane(p1, p2, p3, origin=None):
+    """
+    Construct a plane from 3 points
+
+    :param p1: point a
+    :type p1: array [x,y,z]
+    :param p2: point b
+    :type p2: array [x,y,z]
+    :param p3: point c
+    :type p3: array [x,y,z]
+    :param origin: point used to orient plane normal (optional)
+    :type origin: array [x,y,z]
+    """
+    v1 = p3 - p1
+    v2 = p2 - p1
+    cp = normalize(numpy.cross(v1, v2))
+    d = numpy.dot(cp, p3)
+    
+    if origin:
+        if point_plane_distance([cp[0], cp[1], cp[2], d], origin) < 0:
+            return [-cp[0], -cp[1], -cp[2], -d]
+
+    return [cp[0], cp[1], cp[2], d]
+
+
+def point_plane_distance(plane, point):
+    return numpy.dot(plane[:3], (point))-plane[3]
+
+
+def construct_frustum_bb(cam, scn, margin=0.03):
+    """
+    Construct the camera frustum as a box  
+
+    :param cam: source camera for frustum computation 
+    :type cam: bpy.types.Camera
+    :param scn: source scene for frustum computation 
+    :type scn: bpy.type.Scene
+    :param margin: frustum external margin (safety zone)  
+    :type margin: float
+    """
+    cam_data = cam.data
+    box = [[0, 0, 0] for i in range(8)]
+
+    aspx = scn.render.resolution_x * scn.render.pixel_aspect_x
+    aspy = scn.render.resolution_y * scn.render.pixel_aspect_y
+
+    ratiox = min(aspx / aspy, 1.0)
+    ratioy = min(aspy / aspx, 1.0)
+
+    angleofview = 2.0 * \
+        math.atan(cam_data.sensor_width / (2.0 * cam_data.lens))
+    oppositeclipsta = math.tan(angleofview / 2.0) * cam_data.clip_start
+    oppositeclipend = math.tan(angleofview / 2.0) * cam_data.clip_end
+
+    box[2][0] = box[1][0] = -oppositeclipsta * ratiox
+    box[0][0] = box[3][0] = -oppositeclipend * ratiox
+    box[5][0] = box[6][0] = +oppositeclipsta * ratiox
+    box[4][0] = box[7][0] = +oppositeclipend * ratiox
+    box[1][1] = box[5][1] = -oppositeclipsta * ratioy
+    box[0][1] = box[4][1] = -oppositeclipend * ratioy
+    box[2][1] = box[6][1] = +oppositeclipsta * ratioy
+    box[3][1] = box[7][1] = +oppositeclipend * ratioy
+    box[0][2] = box[3][2] = box[4][2] = box[7][2] = -cam_data.clip_end
+    box[1][2] = box[2][2] = box[5][2] = box[6][2] = -cam_data.clip_start
+
+    return [cam.matrix_world @ Vector(i) for i in box]
+
+
+def construct_frustum_planes(cf):
+    return [construct_plane(cf[0], cf[2], cf[3]),
+            construct_plane(cf[3], cf[2], cf[7]),
+            construct_plane(cf[7], cf[6], cf[4]),
+            construct_plane(cf[5], cf[0], cf[4]),
+            construct_plane(cf[4], cf[0], cf[7]),
+            construct_plane(cf[2], cf[1], cf[5])]
 
 
 class CAM_PROPS_selectCamFrameProps(bpy.types.PropertyGroup):
@@ -46,21 +162,6 @@ class CAM_PROPS_selectCamFrameProps(bpy.types.PropertyGroup):
     slcf_speaker : bpy.props.BoolProperty(name='speaker', default=True)
     slcf_camera : bpy.props.BoolProperty(name='camera', default=True)
     slcf_lamp : bpy.props.BoolProperty(name='lamp', default=True)
-
-def obj_is_in_view(scn, cam, obj, margin = 0.03):
-    '''
-    take scene, camera object, object to evaluate and a frame margin value
-    return a list of coordinate of visible bounding box corners framed by camera frustum
-    if no corner visible object is out of view (return empty list, equivalent of False statement)
-    '''
-
-    ## bound box is relative to obj so multiplied by matrix to find real vector place.
-    cam_view_bbox = [world_to_camera_view(scn, cam, obj.matrix_world @ Vector(i)) for i in obj.bound_box]
-    
-    min = 0.0 - margin
-    max = 1.0 + margin
-    #slight margin around screen
-    return [p for p in cam_view_bbox if min <= p[0] <= max and min <= p[1] <= max and p[2] > 0]
 
 
 def frame_selection(outside=True, anim=False, add=False, margin=0.03, ob_filter=None):
@@ -107,8 +208,23 @@ def frame_selection(outside=True, anim=False, add=False, margin=0.03, ob_filter=
             wm.progress_update(i)#progress-OSD
         
         indexes = []
+        
+        cam_frustum = construct_frustum_bb(
+            scene.camera,
+            scene,
+            margin)
+        cam_planes = construct_frustum_planes(cam_frustum)
+
+        #Precompute cam min max per plane normal
+        mm_cam = []
+        for plane in cam_planes:
+            camera_min_max = get_bb_min_max_on_axe(plane[:3], cam_frustum)
+            camera_min_max[0] -= margin
+            camera_min_max[0] += margin
+            mm_cam.append(camera_min_max)
+
         for ob_id, o in enumerate(pool):
-            if obj_is_in_view(scene, scene.camera, o, margin):
+            if sat_intersect(mm_cam, cam_planes, o):
                 #get obj out of base list and go to visible list
                 visibles.append(pool[ob_id])
                 indexes.append(ob_id)
