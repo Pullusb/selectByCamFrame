@@ -1,8 +1,8 @@
 bl_info = {
     "name": "Select by camera frame",
     "description": "Select objects according to camera frame",
-    "author": "Samuel Bernou",
-    "version": (0, 0, 2),
+    "author": "Samuel Bernou, Swann Martinez",
+    "version": (0, 0, 3),
     "blender": (2, 79, 0),
     "location": "View3D",
     "warning": "",
