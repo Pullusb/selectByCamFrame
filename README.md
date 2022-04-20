@@ -1,4 +1,5 @@
-# selectByCamFrame
+# Select by camera frame
+
 Blender addon - Select objects according to camera frame
 
 **[Download latest (2.8 / 3.x+)](https://github.com/Pullusb/selectByCamFrame/archive/refs/heads/master.zip)**
@@ -7,7 +8,7 @@ For older blender 2.7 version go [here](https://github.com/Pullusb/SB_blender_ad
 
 ### Description:
 
-Select all objects that are in (or out) camera frames.
+Select all objects that are in (or out) camera framing.
 Usefull to hide/delete objects outside of view to gain viewport performance or simply clean scene.
 
 Works by checking bounding box of objects.
