@@ -1,9 +1,9 @@
 # selectByCamFrame
 Blender addon - Select objects according to camera frame
 
-**[Download latest (2.8)](https://raw.githubusercontent.com/Pullusb/selectByCamFrame/master/selectByCamFrame.py)** (right click, save Target as)  
+**[Download latest (2.8 / 3.x+)](https://github.com/Pullusb/selectByCamFrame/archive/refs/heads/master.zip)**
 
-**[Download older (2.7)](https://raw.githubusercontent.com/Pullusb/selectByCamFrame/master/selectByCamFrame_279.py)** (right click, save Target as)
+For older blender 2.7 version go [here](https://github.com/Pullusb/SB_blender_addons_old_2_7)
 
 ### Description:
 

@@ -2,7 +2,7 @@ bl_info = {
     "name": "Select by camera frame",
     "description": "Select objects according to camera frame",
     "author": "Samuel Bernou, Swann Martinez",
-    "version": (0, 0, 3),
+    "version": (0, 1, 0),
     "blender": (2, 80, 0),
     "location": "View3D",
     "warning": "",
@@ -14,7 +14,6 @@ bl_info = {
 import bpy
 from mathutils import Vector
 from time import time
-from bpy_extras.object_utils import world_to_camera_view
 import numpy
 import math
 
@@ -134,7 +133,7 @@ def construct_frustum_planes(cf):
             construct_plane(cf[2], cf[1], cf[5])]
 
 
-class CAM_PROPS_selectCamFrameProps(bpy.types.PropertyGroup):
+class CAM_PG_select_cam_frame_props(bpy.types.PropertyGroup):
     slcf_anim : bpy.props.BoolProperty(
             name="animation",
             description="Selection takes all frame of scene frame range into account\n(long operation if lots of frames/objects)",
@@ -380,14 +379,14 @@ class SELECT_PT_by_cam_frame(bpy.types.Panel):
 classes = (
 SELECT_OT_by_cam_frame,
 SELECT_PT_by_cam_frame,
-CAM_PROPS_selectCamFrameProps,
+CAM_PG_select_cam_frame_props,
 )
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    bpy.types.Scene.camf_sel = bpy.props.PointerProperty(type=CAM_PROPS_selectCamFrameProps)
+    bpy.types.Scene.camf_sel = bpy.props.PointerProperty(type=CAM_PG_select_cam_frame_props)
 
     
 
