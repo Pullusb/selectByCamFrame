@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+ 
 bl_info = {
     "name": "Select by camera frame",
     "description": "Select objects according to camera frame",
