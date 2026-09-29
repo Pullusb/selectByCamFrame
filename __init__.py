@@ -4,8 +4,8 @@ bl_info = {
     "name": "Select by camera frame",
     "description": "Select objects according to camera frame",
     "author": "Samuel Bernou, Swann Martinez",
-    "version": (0, 1, 0),
-    "blender": (2, 80, 0),
+    "version": (0, 2, 0),
+    "blender": (5, 0, 0),
     "location": "View3D",
     "warning": "",
     "wiki_url": "https://github.com/Pullusb/selectByCamFrame",
@@ -20,6 +20,26 @@ import numpy
 import math
 
 IMAX = 90000000
+
+# [object type, filter property, icon]
+TYPELIST = [
+    ['MESH', 'slcf_mesh', 'OBJECT_DATA'],
+    ['CURVE', 'slcf_curve', 'OUTLINER_OB_CURVE'],
+    ['ARMATURE', 'slcf_armature', 'OUTLINER_OB_ARMATURE'],
+    ['LATTICE', 'slcf_lattice', 'OUTLINER_OB_LATTICE'],
+    ['FONT', 'slcf_text', 'OUTLINER_OB_FONT'],
+    ['EMPTY', 'slcf_empty', 'OUTLINER_OB_EMPTY'],
+    ['CAMERA', 'slcf_camera', 'OUTLINER_OB_CAMERA'],
+    ['LIGHT', 'slcf_lamp', 'OUTLINER_OB_LIGHT'],
+    ['SURFACE', 'slcf_surface', 'OUTLINER_OB_SURFACE'],
+    ['META', 'slcf_metaball', 'OUTLINER_OB_META'],
+    ['SPEAKER', 'slcf_speaker', 'OUTLINER_OB_SPEAKER'],
+    ['GREASEPENCIL', 'slcf_greasepencil', 'OUTLINER_OB_GREASEPENCIL'],
+    ['CURVES', 'slcf_curves', 'OUTLINER_OB_CURVES'],
+    ['POINTCLOUD', 'slcf_pointcloud', 'OUTLINER_OB_POINTCLOUD'],
+    ['VOLUME', 'slcf_volume', 'OUTLINER_OB_VOLUME'],
+    ['LIGHT_PROBE', 'slcf_lightprobe', 'OUTLINER_OB_LIGHTPROBE'],
+    ]
 
 def normalize(v):
     norm=numpy.linalg.norm(v, ord=1)
@@ -147,7 +167,10 @@ class CAM_PG_select_cam_frame_props(bpy.types.PropertyGroup):
             default=False)
     slcf_margin : bpy.props.FloatProperty(
             name="margin",
-            description="Use a margin around framing (inside if negative value)\nA little margin can be a safety to avoid having an object being wrongly evaluated as outside the frame\n(part of the object can be inside with bounding_box corner all outside)\ndefault=0.03, min=-0.49, max=0.5",
+            description="Use a margin around framing (inside if negative value)\
+                \nA little margin can be a safety to avoid having an object being wrongly evaluated as outside the frame\
+                \n(part of the object can be inside with bounding_box corner all outside)\
+                \ndefault=0.03",
             default=0.03, min=-0.49, max=0.5, soft_min=0, soft_max=0.2, step=0.01, precision=3, unit='NONE')
 
     slcf_filter : bpy.props.BoolProperty(name='Object filter', default=False)
@@ -163,6 +186,11 @@ class CAM_PG_select_cam_frame_props(bpy.types.PropertyGroup):
     slcf_speaker : bpy.props.BoolProperty(name='speaker', default=True)
     slcf_camera : bpy.props.BoolProperty(name='camera', default=True)
     slcf_lamp : bpy.props.BoolProperty(name='lamp', default=True)
+    slcf_greasepencil : bpy.props.BoolProperty(name='grease pencil', default=True)
+    slcf_curves : bpy.props.BoolProperty(name='hair curves', default=True)
+    slcf_pointcloud : bpy.props.BoolProperty(name='point cloud', default=True)
+    slcf_volume : bpy.props.BoolProperty(name='volume', default=True)
+    slcf_lightprobe : bpy.props.BoolProperty(name='light probe', default=True)
 
 
 def frame_selection(outside=True, anim=False, add=False, margin=0.03, ob_filter=None):
@@ -174,10 +202,11 @@ def frame_selection(outside=True, anim=False, add=False, margin=0.03, ob_filter=
     add : if True, add to current selection. Else select/deselect everything
     margin : have a (safety) margin outside framing (or inside if negative value).
     ob_filter : a list or a tuple to restrict object type (if None, all type)
-    - all type : ('MESH', 'CURVE', 'SURFACE', 'META', 'TEXT', 'ARMATURE', 'LATTICE', 'EMPTY', 'SPEAKER', 'CAMERA', 'LAMP',)
+    - all type : see TYPELIST (bpy.types.Object.type identifiers)
     '''
 
     scene = bpy.context.scene
+    view_layer = bpy.context.view_layer
     cur = scene.frame_current
     if anim:
         start = scene.frame_start
@@ -190,15 +219,18 @@ def frame_selection(outside=True, anim=False, add=False, margin=0.03, ob_filter=
         start = cur
         end = cur + 1
     
+    # only objects in the view layer can be selected (scene.objects includes excluded collections)
+    selectables = [o for o in view_layer.objects if o.visible_get(view_layer=view_layer) and not o.hide_select]
+
     if ob_filter:
-        base = [o for o in scene.objects if o.type in ob_filter]
+        base = [o for o in selectables if o.type in ob_filter]
         if not add:
             #deselect unwanted type since there won't be treated #can deselect everythin as well...
-            for o in scene.objects:
+            for o in selectables:
                 if o.type not in ob_filter:
                     o.select_set(False)
     else:#all
-        base = scene.objects[:]#[o for o in scene.objects]
+        base = selectables
 
     pool = base.copy()
     visibles = []
@@ -260,20 +292,21 @@ def frame_selection(outside=True, anim=False, add=False, margin=0.03, ob_filter=
     if anim:
         scene.frame_set(cur)
         wm.progress_end()#progress-OSD
-    scene.camera.select_set(False)
+    if scene.camera.name in view_layer.objects:
+        scene.camera.select_set(False)
 
     return
 
 
 class SELECT_OT_by_cam_frame(bpy.types.Operator):
     bl_idname = "select.by_cam_frame"
-    bl_label = "Select by cam frame"
+    bl_label = "Select By Cam Frame"
     bl_description = "Set selection according to camera frame"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
-        return context.mode == 'OBJECT'
+        return context.mode == 'OBJECT' and context.scene.camera is not None
 
     #duplicate margin_adjust as a self.prop so it can be adjusted in the redo
     margin_adjust : bpy.props.FloatProperty(
@@ -284,23 +317,9 @@ class SELECT_OT_by_cam_frame(bpy.types.Operator):
     outside_frame : bpy.props.BoolProperty()
 
     def execute(self, context):
-        typelist = [
-            ['MESH', 'slcf_mesh','OBJECT_DATA'],
-            ['CURVE', 'slcf_curve','OUTLINER_OB_CURVE'],
-            ['ARMATURE', 'slcf_armature','OUTLINER_OB_ARMATURE'],
-            ['LATTICE', 'slcf_lattice','OUTLINER_OB_LATTICE'],
-            ['TEXT', 'slcf_text','OUTLINER_OB_FONT'],
-            ['EMPTY', 'slcf_empty','OUTLINER_OB_EMPTY'],
-            ['CAMERA', 'slcf_camera','OUTLINER_OB_CAMERA'],
-            ['LIGHT', 'slcf_lamp','OUTLINER_OB_LIGHT'],
-            ['SURFACE', 'slcf_surface','OUTLINER_OB_SURFACE'],
-            ['META', 'slcf_metaball','OUTLINER_OB_META'],
-            ['SPEAKER', 'slcf_speaker','OUTLINER_OB_SPEAKER'],
-            ]
-
         ob_filter = []
         if context.scene.camf_sel.slcf_filter:
-            for p in typelist:
+            for p in TYPELIST:
                 if getattr(context.scene.camf_sel, p[1]):
                     ob_filter.append(p[0])
 
@@ -328,7 +347,7 @@ class SELECT_OT_by_cam_frame(bpy.types.Operator):
 
   
 class SELECT_PT_by_cam_frame(bpy.types.Panel):
-    bl_idname = "select_PT_by_cam_frame"
+    bl_idname = "SELECT_PT_by_cam_frame"
     bl_label = "Camera frame selection"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -352,21 +371,8 @@ class SELECT_PT_by_cam_frame(bpy.types.Panel):
         row = box.row()
         row.prop(props, 'slcf_filter', icon="FILTER")#icon_only=True#icon_tria(props.slcf_filter)
         if props.slcf_filter:
-            typelist = [
-                ['MESH', 'slcf_mesh','OBJECT_DATA'],
-                ['CURVE', 'slcf_curve','OUTLINER_OB_CURVE'],
-                ['ARMATURE', 'slcf_armature','OUTLINER_OB_ARMATURE'],
-                ['LATTICE', 'slcf_lattice','OUTLINER_OB_LATTICE'],
-                ['TEXT', 'slcf_text','OUTLINER_OB_FONT'],
-                ['EMPTY', 'slcf_empty','OUTLINER_OB_EMPTY'],
-                ['CAMERA', 'slcf_camera','OUTLINER_OB_CAMERA'],
-                ['LIGHT', 'slcf_lamp','OUTLINER_OB_LIGHT'],
-                ['SURFACE', 'slcf_surface','OUTLINER_OB_SURFACE'],
-                ['META', 'slcf_metaball','OUTLINER_OB_META'],
-                ['SPEAKER', 'slcf_speaker','OUTLINER_OB_SPEAKER'],
-                ]
             row = box.row(align = True)
-            for obspec in typelist:
+            for obspec in TYPELIST:
                 row.prop(props, obspec[1], icon=obspec[2], icon_only=True)
 
         #launch buttons

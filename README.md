@@ -2,7 +2,12 @@
 
 Blender addon - Select objects according to camera frame
 
-**[Download latest (2.8 / 3.x+)](https://github.com/Pullusb/selectByCamFrame/archive/refs/heads/master.zip)**
+
+
+
+**[Download latest (blender 5)](https://github.com/Pullusb/selectByCamFrame/archive/refs/heads/master.zip)**
+
+For older blender 2.8 to 3.x, use appropriate release from release page.
 
 For older blender 2.7 version go [here](https://github.com/Pullusb/SB_blender_addons_old_2_7)
 
