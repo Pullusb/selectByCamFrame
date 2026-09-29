@@ -4,7 +4,7 @@ bl_info = {
     "name": "Select by camera frame",
     "description": "Select objects according to camera frame",
     "author": "Samuel Bernou, Swann Martinez",
-    "version": (0, 2, 0),
+    "version": (0, 3, 0),
     "blender": (5, 0, 0),
     "location": "View3D",
     "warning": "",
@@ -17,13 +17,12 @@ import bpy
 from mathutils import Vector
 from time import time
 import numpy
-import math
 
 IMAX = 90000000
 
 # [object type, filter property, icon]
 TYPELIST = [
-    ['MESH', 'slcf_mesh', 'OBJECT_DATA'],
+    ['MESH', 'slcf_mesh', 'OUTLINER_OB_MESH'],
     ['CURVE', 'slcf_curve', 'OUTLINER_OB_CURVE'],
     ['ARMATURE', 'slcf_armature', 'OUTLINER_OB_ARMATURE'],
     ['LATTICE', 'slcf_lattice', 'OUTLINER_OB_LATTICE'],
@@ -59,8 +58,31 @@ def get_bb_min_max_on_axe(axis, bb):
     return [bb_min,bb_max]
 
 
-def sat_intersect(mm_cam, frustum_planes, obj):
-    obj_bb = [obj.matrix_world @ Vector(i) for i in obj.bound_box]
+def get_world_bbox(obj, matrix=None):
+    mat = obj.matrix_world if matrix is None else matrix
+    return [mat @ Vector(i) for i in obj.bound_box]
+
+
+def get_instances_bboxes(depsgraph, instancers):
+    '''
+    Return a dict {instancer name_full: [world bbox of each instanced sub-object]}
+    for instancers (collection instance, vertex/face instancing, particles, geometry nodes instances...)
+
+    instancers : set of original objects name_full to gather instances for
+    '''
+    bboxes = {}
+    for inst in depsgraph.object_instances:
+        if not inst.is_instance:
+            continue
+        parent_name = inst.parent.original.name_full
+        if parent_name not in instancers:
+            continue
+        # instance data is only valid during this iteration step
+        bboxes.setdefault(parent_name, []).append(get_world_bbox(inst.object, inst.matrix_world.copy()))
+    return bboxes
+
+
+def sat_intersect(mm_cam, frustum_planes, obj_bb):
     for i,plane in enumerate(frustum_planes):
         mm_obj = get_bb_min_max_on_axe(plane[:3],obj_bb)
 
@@ -115,35 +137,41 @@ def construct_frustum_bb(cam, scn, margin=0.03):
     :type cam: bpy.types.Camera
     :param scn: source scene for frustum computation 
     :type scn: bpy.type.Scene
-    :param margin: frustum external margin (safety zone)  
+    :param margin: frustum external margin (safety zone), in fraction of frame size on each side
     :type margin: float
     """
     cam_data = cam.data
-    box = [[0, 0, 0] for i in range(8)]
 
-    aspx = scn.render.resolution_x * scn.render.pixel_aspect_x
-    aspy = scn.render.resolution_y * scn.render.pixel_aspect_y
+    # frame corners in camera local space (handle lens shift, sensor fit, aspect ratio and ortho)
+    frame = cam_data.view_frame(scene=scn)
+    center = sum(frame, Vector()) / 4
 
-    ratiox = min(aspx / aspy, 1.0)
-    ratioy = min(aspy / aspx, 1.0)
+    # corners keyed by (x sign, y sign) around frame center
+    corners = {}
+    for co in frame:
+        co = center + (co - center) * (1 + 2 * margin)
+        corners[(co.x > center.x, co.y > center.y)] = co
 
-    angleofview = 2.0 * \
-        math.atan(cam_data.sensor_width / (2.0 * cam_data.lens))
-    oppositeclipsta = math.tan(angleofview / 2.0) * cam_data.clip_start
-    oppositeclipend = math.tan(angleofview / 2.0) * cam_data.clip_end
+    def at_depth(co, depth):
+        if cam_data.type == 'ORTHO':
+            return Vector((co.x, co.y, -depth))
+        # perspective (panoramic cameras are treated as perspective)
+        return co * (depth / -co.z)
 
-    box[2][0] = box[1][0] = -oppositeclipsta * ratiox
-    box[0][0] = box[3][0] = -oppositeclipend * ratiox
-    box[5][0] = box[6][0] = +oppositeclipsta * ratiox
-    box[4][0] = box[7][0] = +oppositeclipend * ratiox
-    box[1][1] = box[5][1] = -oppositeclipsta * ratioy
-    box[0][1] = box[4][1] = -oppositeclipend * ratioy
-    box[2][1] = box[6][1] = +oppositeclipsta * ratioy
-    box[3][1] = box[7][1] = +oppositeclipend * ratioy
-    box[0][2] = box[3][2] = box[4][2] = box[7][2] = -cam_data.clip_end
-    box[1][2] = box[2][2] = box[5][2] = box[6][2] = -cam_data.clip_start
+    # box indices order expected by construct_frustum_planes
+    layout = [
+        ((False, False), cam_data.clip_end),
+        ((False, False), cam_data.clip_start),
+        ((False, True), cam_data.clip_start),
+        ((False, True), cam_data.clip_end),
+        ((True, False), cam_data.clip_end),
+        ((True, False), cam_data.clip_start),
+        ((True, True), cam_data.clip_start),
+        ((True, True), cam_data.clip_end),
+    ]
+    box = [at_depth(corners[key], depth) for key, depth in layout]
 
-    return [cam.matrix_world @ Vector(i) for i in box]
+    return [cam.matrix_world @ co for co in box]
 
 
 def construct_frustum_planes(cf):
@@ -251,13 +279,15 @@ def frame_selection(outside=True, anim=False, add=False, margin=0.03, ob_filter=
         #Precompute cam min max per plane normal
         mm_cam = []
         for plane in cam_planes:
-            camera_min_max = get_bb_min_max_on_axe(plane[:3], cam_frustum)
-            camera_min_max[0] -= margin
-            camera_min_max[0] += margin
-            mm_cam.append(camera_min_max)
+            mm_cam.append(get_bb_min_max_on_axe(plane[:3], cam_frustum))
+
+        # bbox of instancer is reduced to its own geometry (a point for empties), check instanced sub-objects too
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        instances_bboxes = get_instances_bboxes(depsgraph, {o.name_full for o in pool})
 
         for ob_id, o in enumerate(pool):
-            if sat_intersect(mm_cam, cam_planes, o):
+            bboxes = [get_world_bbox(o)] + instances_bboxes.get(o.name_full, [])
+            if any(sat_intersect(mm_cam, cam_planes, bb) for bb in bboxes):
                 #get obj out of base list and go to visible list
                 visibles.append(pool[ob_id])
                 indexes.append(ob_id)
