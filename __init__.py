@@ -183,25 +183,30 @@ def construct_frustum_planes(cf):
             construct_plane(cf[2], cf[1], cf[5])]
 
 
+class CAM_PG_hide_store_item(bpy.types.PropertyGroup):
+    ob : bpy.props.PointerProperty(type=bpy.types.Object)
+    hidden : bpy.props.BoolProperty()
+
+
 class CAM_PG_select_cam_frame_props(bpy.types.PropertyGroup):
     slcf_anim : bpy.props.BoolProperty(
-            name="animation",
+            name="Animation",
             description="Selection takes all frame of scene frame range into account\n(long operation if lots of frames/objects)",
             default=False)
 
     slcf_additive_select : bpy.props.BoolProperty(
-            name="additive selection",
+            name="Additive Selection",
             description="Add to current selection. Else select/deselect everything",
             default=False)
     slcf_margin : bpy.props.FloatProperty(
-            name="margin",
+            name="Margin",
             description="Use a margin around framing (inside if negative value)\
                 \nA little margin can be a safety to avoid having an object being wrongly evaluated as outside the frame\
                 \n(part of the object can be inside with bounding_box corner all outside)\
                 \ndefault=0.03",
             default=0.03, min=-0.49, max=0.5, soft_min=0, soft_max=0.2, step=0.01, precision=3, unit='NONE')
 
-    slcf_filter : bpy.props.BoolProperty(name='Object filter', default=False)
+    slcf_filter : bpy.props.BoolProperty(name='Object Filter', default=False)
 
     slcf_mesh : bpy.props.BoolProperty(name='mesh', default=True)
     slcf_curve : bpy.props.BoolProperty(name='curve', default=True)
@@ -219,6 +224,10 @@ class CAM_PG_select_cam_frame_props(bpy.types.PropertyGroup):
     slcf_pointcloud : bpy.props.BoolProperty(name='point cloud', default=True)
     slcf_volume : bpy.props.BoolProperty(name='volume', default=True)
     slcf_lightprobe : bpy.props.BoolProperty(name='light probe', default=True)
+
+    # objects and their hide state before toggle, used to restore
+    slcf_render_store : bpy.props.CollectionProperty(type=CAM_PG_hide_store_item)
+    slcf_viewport_store : bpy.props.CollectionProperty(type=CAM_PG_hide_store_item)
 
 
 def frame_selection(outside=True, anim=False, add=False, margin=0.03, ob_filter=None):
@@ -375,10 +384,89 @@ class SELECT_OT_by_cam_frame(bpy.types.Operator):
         self.margin_adjust = context.scene.camf_sel.slcf_margin
         return self.execute(context)
 
+
+HIDE_MODES = [
+    ('RENDER', 'Render', 'Object render visibility (hide_render)'),
+    ('VIEWPORT', 'Viewport', 'Object viewport visibility (hide_viewport)'),
+    ]
+
+
+def get_hide_store(context, mode):
+    props = context.scene.camf_sel
+    return props.slcf_render_store if mode == 'RENDER' else props.slcf_viewport_store
+
+
+class SELECT_OT_cam_frame_toggle_hide(bpy.types.Operator):
+    bl_idname = "select.cam_frame_toggle_hide"
+    bl_label = "Toggle Selection Visibility"
+    bl_description = "Toggle visibility of selected objects\
+        \nHide all if any is visible, else show all\
+        \nInitial state of objects is stored to be restored later"
+    bl_options = {"REGISTER", "UNDO"}
+
+    mode : bpy.props.EnumProperty(items=HIDE_MODES, default='RENDER')
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT' and bool(context.selected_objects)
+
+    def execute(self, context):
+        attr = 'hide_render' if self.mode == 'RENDER' else 'hide_viewport'
+        store = get_hide_store(context, self.mode)
+        selection = context.selected_objects
+
+        # store only objects not already stored, to keep their original state
+        stored = {item.ob for item in store if item.ob}
+        for o in selection:
+            if o not in stored:
+                item = store.add()
+                item.ob = o
+                item.hidden = getattr(o, attr)
+
+        ## Hide if at least one is visible, Unhide if all hidden (valid only for hide_render)
+        hide = not all(getattr(o, attr) for o in selection)
+        for o in selection:
+            setattr(o, attr, hide)
+
+        self.report({'INFO'}, f"{'Hide' if hide else 'Show'} {self.mode.lower()}: {len(selection)} object(s)")
+        return {"FINISHED"}
+
+
+class SELECT_OT_cam_frame_restore_hide(bpy.types.Operator):
+    bl_idname = "select.cam_frame_restore_hide"
+    bl_label = "Restore Visibility"
+    bl_description = "Restore visibility of objects stored before toggle, and select them back"
+    bl_options = {"REGISTER", "UNDO"}
+
+    mode : bpy.props.EnumProperty(items=HIDE_MODES, default='RENDER')
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT'
+
+    def execute(self, context):
+        attr = 'hide_render' if self.mode == 'RENDER' else 'hide_viewport'
+        store = get_hide_store(context, self.mode)
+        view_layer = context.view_layer
+
+        obs = [item.ob for item in store if item.ob]
+        for item in store:
+            if item.ob:
+                setattr(item.ob, attr, item.hidden)
+        store.clear()
+
+        # set visibility first, hidden objects can't be selected
+        for o in obs:
+            if o.name in view_layer.objects and o.visible_get(view_layer=view_layer) and not o.hide_select:
+                o.select_set(True)
+
+        self.report({'INFO'}, f"Restored {self.mode.lower()} visibility: {len(obs)} object(s)")
+        return {"FINISHED"}
+
   
 class SELECT_PT_by_cam_frame(bpy.types.Panel):
     bl_idname = "SELECT_PT_by_cam_frame"
-    bl_label = "Camera frame selection"
+    bl_label = "Camera Frame Selection"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "Tool"
@@ -386,38 +474,51 @@ class SELECT_PT_by_cam_frame(bpy.types.Panel):
     def draw(self, context):
         props = context.scene.camf_sel
         layout = self.layout
-        
+        col = layout.column()
         #options
-        row=layout.row()
+        row = col.row(align=True)
         row.prop(props, "slcf_anim")
-        row.prop(props, "slcf_additive_select")
+        row.prop(props, "slcf_additive_select", text='Additive Select')
         
         #margin slider
-        layout = self.layout
-        layout.prop(props, "slcf_margin")
+        col.prop(props, "slcf_margin")
 
         #filters
         box = layout.box()
         row = box.row()
         row.prop(props, 'slcf_filter', icon="FILTER")#icon_only=True#icon_tria(props.slcf_filter)
         if props.slcf_filter:
-            row = box.row(align = True)
+            row = box.row(align=True)
             for obspec in TYPELIST:
                 row.prop(props, obspec[1], icon=obspec[2], icon_only=True)
 
         #launch buttons
         row=layout.row(align=True)
-        row.operator('select.by_cam_frame',text="Select inside cam").outside_frame = False 
-        row.operator('select.by_cam_frame',text="Select outside cam").outside_frame = True 
+        row.operator('select.by_cam_frame',text="Select Inside Cam").outside_frame = False 
+        row.operator('select.by_cam_frame',text="Select Outside Cam").outside_frame = True
 
+        #visibility toggles, with restore button when a state is stored
+        col = layout.column(align=True)
+        col.label(text='Selection Visibility Management:')
+        for mode, text, icon in (
+                ('RENDER', "Toggle render", 'RESTRICT_RENDER_OFF'),
+                ('VIEWPORT', "Toggle viewport", 'RESTRICT_VIEW_OFF'),
+                ):
+            row = col.row(align=True)
+            row.operator('select.cam_frame_toggle_hide', text=text, icon=icon).mode = mode
+            if len(get_hide_store(context, mode)):
+                row.operator('select.cam_frame_restore_hide', text="", icon='LOOP_BACK').mode = mode
 
 
 ### --- REGISTER
 
 classes = (
-SELECT_OT_by_cam_frame,
-SELECT_PT_by_cam_frame,
+CAM_PG_hide_store_item,
 CAM_PG_select_cam_frame_props,
+SELECT_OT_by_cam_frame,
+SELECT_OT_cam_frame_toggle_hide,
+SELECT_OT_cam_frame_restore_hide,
+SELECT_PT_by_cam_frame,
 )
 
 
