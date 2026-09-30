@@ -488,9 +488,20 @@ class SELECT_PT_by_cam_frame(bpy.types.Panel):
         row = box.row()
         row.prop(props, 'slcf_filter', icon="FILTER")#icon_only=True#icon_tria(props.slcf_filter)
         if props.slcf_filter:
-            row = box.row(align=True)
-            for obspec in TYPELIST:
-                row.prop(props, obspec[1], icon=obspec[2], icon_only=True)
+            # region width is in pixels, system ui_scale combines preference ui scale and monitor DPI
+            width = context.region.width / (context.preferences.system.ui_scale or 1.0)
+            col = box.column(align=True)
+            if width < 190:
+                # very narrow sidebar: vertical list with names
+                for obspec in TYPELIST:
+                    col.prop(props, obspec[1], text=obspec[0].replace('_', ' ').title(), icon=obspec[2])
+            else:
+                # narrow sidebar: icons dispatched on two lines, else single line
+                per_line = (len(TYPELIST) + 1) // 2 if width < 300 else len(TYPELIST)
+                for i, obspec in enumerate(TYPELIST):
+                    if i % per_line == 0:
+                        row = col.row(align=True)
+                    row.prop(props, obspec[1], icon=obspec[2], icon_only=True)
 
         #launch buttons
         row=layout.row(align=True)
