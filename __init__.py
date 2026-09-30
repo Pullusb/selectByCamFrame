@@ -488,6 +488,22 @@ class SELECT_PT_by_cam_frame(bpy.types.Panel):
         row = box.row()
         row.prop(props, 'slcf_filter', icon="FILTER")#icon_only=True#icon_tria(props.slcf_filter)
         if props.slcf_filter:
+            ## Responsive method with icon overflowing
+            # # filter icons layout, in pixels at ui scale 1.0
+            # ICON_BUTTON_WIDTH = 20 # UI_UNIT_X, width of an icon only button before compression
+            # FILTER_MARGIN_WIDTH = 50 # sidebar tabs, panel and box paddings
+            # # region width is in pixels, system ui_scale combines preference ui scale and monitor DPI
+            # width = context.region.width / (context.preferences.system.ui_scale or 1.0)
+            # # number of icons fitting on a line without compression, then balance icons across needed lines
+            # fit = max(1, int((width - FILTER_MARGIN_WIDTH) // ICON_BUTTON_WIDTH))
+            # lines = math.ceil(len(TYPELIST) / fit)
+            # per_line = math.ceil(len(TYPELIST) / lines)
+            # col = box.column(align=True)
+            # for i, obspec in enumerate(TYPELIST):
+            #     if i % per_line == 0:
+            #         row = col.row(align=True)
+            #     row.prop(props, obspec[1], icon=obspec[2], icon_only=True)
+
             # region width is in pixels, system ui_scale combines preference ui scale and monitor DPI
             width = context.region.width / (context.preferences.system.ui_scale or 1.0)
             col = box.column(align=True)
